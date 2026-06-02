@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>H++ IDE</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background-color: #1e1e24;
+            color: #f8f8f2;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        header {
+            background-color: #111115;
+            padding: 15px 20px;
+            border-bottom: 2px solid #33333f;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        header h1 { font-size: 1.5rem; color: #00ffca; letter-spacing: 1px; }
+        select {
+            background-color: #2a2a35;
+            color: #00ffca;
+            border: 1px solid #33333f;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 0.9rem;
+            outline: none;
+            cursor: pointer;
+        }
+        .main-container { display: flex; flex: 1; overflow: hidden; }
+        .panel { flex: 1; display: flex; flex-direction: column; padding: 20px; overflow: hidden; }
+        .left-panel { border-right: 2px solid #33333f; background-color: #141419; }
+        .right-panel { background-color: #0d0d11; }
+        .panel-title { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 2px; color: #88889f; margin-bottom: 10px; font-weight: 600; }
+        textarea {
+            flex: 1;
+            background-color: #1e1e24;
+            border: 1px solid #33333f;
+            border-radius: 6px;
+            color: #f8f8f2;
+            font-family: monospace;
+            font-size: 1.1rem;
+            padding: 15px;
+            resize: none;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+        textarea:focus { border-color: #00ffca; }
+        .run-btn {
+            background-color: #00ffca;
+            color: #111115;
+            border: none;
+            border-radius: 6px;
+            padding: 12px;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 15px;
+            transition: background-color 0.2s, transform 0.1s;
+        }
+        .run-btn:hover { background-color: #00d4aa; }
+        .run-btn:active { transform: scale(0.98); }
+        .terminal-display {
+            flex: 1;
+            background-color: #050507;
+            border: 1px solid #22222b;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 1rem;
+            padding: 15px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>H++ Language IDE</h1>
+        <div class="header-controls">
+            <select id="templateSelect">
+                <option value="">-- Load Sample Code --</option>
+                <option value="math">Basic Arithmetic</option>
+                <option value="variables">Variables & Memory</option>
+                <option value="conditionals">Logic & Conditionals</option>
+                <option value="comments">Comments Demo</option>
+                <option value="printing">Strings & Printing</option>
+                <option value="comparisons">Comparisons Matrix</option>
+                <option value="multiCompare">Chained Comparisons</option>
+                <option value="logic">Logical Boolean Macros</option>
+                <option value="scoping">Multi-Variable let Scoping</option>
+                <option value="functions">Custom Lambdas</option>
+                <option value="recursion">Recursive Factorials</option>
+            </select>
+        </div>
+    </header>
+
+    <div class="main-container">
+        <div class="panel left-panel">
+            <div class="panel-title">Source Code Workspace</div>
+            <textarea id="editor" placeholder="Type your H++ expressions here..."></textarea>
+            <button class="run-btn" id="runBtn">Execute Script</button>
+        </div>
+        <div class="panel right-panel">
+            <div class="panel-title">Console Output Monitor</div>
+            <div class="terminal-display" id="consoleMonitor">> Core engine ready. Awaiting instruction execution...</div>
+        </div>
+    </div>
+
+    <script>
+        // === ENGINE PIPELINE ===
+        function tokenize(source) {
+            return source.replaceAll('(', ' ( ').replaceAll(')', ' ) ').split(/\s+/).filter(t => t !== "");
+        }
+
+        function parse(tokens) {
+            if (!tokens.length) throw new SyntaxError("Unexpected EOF");
+            let token = tokens.shift();
+            if (token === '(') {
+                let list = [];
+                while (tokens.length && tokens[0] !== ')') list.push(parse(tokens));
+                if (!tokens.length) throw new SyntaxError("Missing closing parenthesis");
+                tokens.shift(); 
+                return list;
+            }
+            if (token === ')') throw new SyntaxError("Unexpected closing parenthesis");
+            return atom(token);
+        }
+
+        function atom(token) {
+            if (/^-?\d+$/.test(token)) return parseInt(token, 10);
+            if (/^-?\d+\.\d+$/.test(token)) return parseFloat(token);
+            if (token === 'true') return true;
+            if (token === 'false') return false;
+            if (token.startsWith('"') && token.endsWith('"')) return token.slice(1, -1).replaceAll('_', ' ');
+            return token;
+        }
+
+        // === EVALUATOR CORE ===
+        let GLOBAL_ENV = {};
+        let stackDepth = 0;
+        const STACK_LIMIT = 500;
+
+        function evaluate(ast, env = GLOBAL_ENV) {
+            if (typeof ast !== 'string' && !Array.isArray(ast)) return ast;
+            if (typeof ast === 'string') return ast in env ? env[ast] : (ast in GLOBAL_ENV ? GLOBAL_ENV[ast] : ast);
+
+            let [operator, ...rawArgs] = ast;
+
+            // Macro Evaluation Core
+            if (operator === 'lambda') return { type: 'lambda', params: rawArgs[0], body: rawArgs[1], environment: env };
+            
+            if (operator === 'let') {
+                let localCtx = Object.create(env);
+                for (let [name, valExpr] of rawArgs[0]) {
+                    localCtx[name] = evaluate(valExpr, env);
+                }
+                return evaluate(rawArgs[1], localCtx);
+            }
+            if (operator === 'and') {
+                for (let arg of rawArgs) if (!evaluate(arg, env)) return false;
+                return true;
+            }
+            if (operator === 'or') {
+                for (let arg of rawArgs) if (evaluate(arg, env)) return true;
+                return false;
+            }
+            if (operator === 'not') return !evaluate(rawArgs[0], env);
+            if (operator === 'print') return rawArgs.map(arg => evaluate(arg, env)).join(' ');
+            if (operator === 'define') return GLOBAL_ENV[rawArgs[0]] = evaluate(rawArgs[1], env), `Defined ${rawArgs[0]}`;
+            if (operator === 'if') return evaluate(evaluate(rawArgs[0], env) ? rawArgs[1] : rawArgs[2], env);
+
+            // Function Call Resolution
+            let proc = evaluate(operator, env);
+            if (proc?.type === 'lambda') {
+                if (++stackDepth > STACK_LIMIT) { stackDepth = 0; throw new Error("Max call stack exceeded"); }
+                let args = rawArgs.map(arg => evaluate(arg, env));
+                let fnScope = Object.create(proc.environment);
+                proc.params.forEach((param, i) => fnScope[param] = args[i]);
+                try {
+                    let res = evaluate(proc.body, fnScope);
+                    stackDepth--;
+                    return res;
+                } catch (e) { stackDepth = 0; throw e; }
+            }
+
+            // Native Built-in Operations
+            let args = rawArgs.map(arg => evaluate(arg, env));
+            if (operator === '+') return args.reduce((a, b) => a + b, 0);
+            if (operator === '-') return args.length > 1 ? args[0] - args.slice(1).reduce((a, b) => a + b, 0) : -args[0];
+            if (operator === '*') return args.reduce((a, b) => a * b, 1);
+            if (operator === '/') { if (args[1] === 0) throw new Error("Division by zero"); return args[0] / args[1]; }
+            
+            if (['>', '<', '='].includes(operator)) {
+                for (let i = 0; i < args.length - 1; i++) {
+                    if (operator === '>' && !(args[i] > args[i+1])) return false;
+                    if (operator === '<' && !(args[i] < args[i+1])) return false;
+                    if (operator === '=' && !(args[i] === args[i+1])) return false;
+                }
+                return true;
+            }
+            throw new Error(`Unknown operator: ${operator}`);
+        }
+
+        // === RUNTIME / UI HANDLERS ===
+        const consoleMonitor = document.getElementById('consoleMonitor');
+        const editor = document.getElementById('editor');
+        const runBtn = document.getElementById('runBtn');
+        const templateSelect = document.getElementById('templateSelect');
+
+        const templates = {
+            math: "(+ 12.5 7.5)\n(- 100 45)\n(* 5 5 2)\n(/ 50 2)",
+            variables: "(define radius 10)\n(define pi 3.14)\n(* pi (* radius radius))",
+            conditionals: "(define age 16)\n(if (> age 18) 111 000)\n(+ age 4)",
+            comments: "; Skipped line\n(define value 40)\n(+ value 10)",
+            printing: "(define user \"Alex_Smith\")\n(print \"Welcome,\" user)",
+            comparisons: "(> 25 10)\n(< 5.5 2.1)\n(= 100 100)",
+            multiCompare: "(< 1 5 10 50)\n(> 100 50 20 5)\n(= 7 7 7 7)",
+            logic: "(define age 20)\n(define bal 150)\n(and (> age 18) (> bal 100))\n(or (< age 10) (= bal 150))\n(not (= age 20))",
+            scoping: "(let ((width 20) (height 5)) (* width height))",
+            functions: "(define calc_area (lambda (w h) (* w h)))\n(calc_area 15 4)",
+            recursion: "(define fact (lambda (n) (if (= n 1) 1 (* n (fact (- n 1))))))\n(fact 5)"
+        };
+
+        function append(text, type = 'info') {
+            const line = document.createElement('div');
+            line.textContent = text;
+            if (type === 'success') line.style.color = '#00ffca';
+            if (type === 'error') line.style.color = '#ff5555';
+            if (type === 'input') line.style.color = '#88889f';
+            consoleMonitor.appendChild(line);
+            consoleMonitor.scrollTop = consoleMonitor.scrollHeight;
+        }
+
+        templateSelect.addEventListener('change', function() {
+            if (this.value) editor.value = templates[this.value];
+        });
+
+        runBtn.addEventListener('click', () => {
+            const rawCode = editor.value.trim();
+            if (!rawCode) return;
+
+            consoleMonitor.innerHTML = '';
+            append("Executing script matrix...\n", 'info');
+            GLOBAL_ENV = {};
+            stackDepth = 0;
+
+            const expressions = rawCode.split(/\r?\n/).map(l => l.trim()).filter(l => l !== "");
+
+            for (let expr of expressions) {
+                if (expr.startsWith(';')) { append(`[Comment] ${expr}`, 'input'); continue; }
+                append(`H++> ${expr}`, 'input');
+                try {
+                    let result = evaluate(parse(tokenize(expr)));
+                    append(`Result: ${result}\n`, 'success');
+                } catch (e) {
+                    append(`Runtime Error: ${e.message}\n`, 'error');
+                    break;
+                }
+            }
+        });
+    </script>
+</body>
+</html>
